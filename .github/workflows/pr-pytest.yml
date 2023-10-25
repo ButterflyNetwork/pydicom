@@ -2,16 +2,15 @@ name: pr-unit-tests
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ release/2.4.3-buffer ]
 
 jobs:
   test-pypy:
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, auto, small]
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python-version: [pypy-3.7]
+        python-version: [pypy-3.11]
     steps:
     - uses: actions/checkout@v3
     - name: Set up Python ${{ matrix.python-version }}
@@ -31,12 +30,11 @@ jobs:
         pytest
 
   test-core-only:
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, auto, small]
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.7', '3.8', '3.9', '3.10', '3.11']
+        python-version: ['3.11']
         include:
           - os: 'ubuntu-latest'
             pytest-args: --cov=pydicom --cov-append
@@ -62,7 +60,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: py${{ matrix.python-version }}-${{ matrix.os }}-pip
+        key: py${{ matrix.python-version }}-[self-hosted, auto, small]-pip
 
     - name: Cache pydicom test data
       id: cache-testdata
@@ -85,11 +83,10 @@ jobs:
       uses: codecov/codecov-action@v3
 
   test-core-extras:
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, auto, small]
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ['3.11']
         include:
           - os: 'ubuntu-latest'
@@ -116,7 +113,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: py${{ matrix.python-version }}-${{ matrix.os }}-pip
+        key: py${{ matrix.python-version }}-[self-hosted, auto, small]-pip
 
     - name: Cache pydicom test data
       id: cache-testdata

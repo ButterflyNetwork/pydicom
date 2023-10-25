@@ -6,11 +6,13 @@ from copy import deepcopy
 from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
 import os
+import sys
 from pathlib import Path
 from platform import python_implementation
 
 from struct import unpack
 from tempfile import TemporaryFile
+from typing import cast
 import zlib
 
 import pytest
@@ -37,7 +39,7 @@ from pydicom.uid import (
     CTImageStorage,
 )
 from pydicom.util.hexutil import hex2bytes
-from pydicom.valuerep import DA, DT, TM, VR
+from pydicom.valuerep import BUFFERABLE_VRS, DA, DT, TM, VR
 from pydicom.values import convert_text
 from ._write_stds import impl_LE_deflen_std_hex
 
@@ -2687,15 +2689,23 @@ class TestWriteUndefinedLengthPixelData:
         self.fp.seek(0)
         assert self.fp.read() == expected
 
-    def test_little_endian_incorrect_data(self):
+    @pytest.mark.parametrize(
+        "data",
+        (
+            b"\xff\xff\x00\xe0" b"\x00\x01\x02\x03" b"\xfe\xff\xdd\xe0",
+            BytesIO(b"\xff\xff\x00\xe0" b"\x00\x01\x02\x03" b"\xfe\xff\xdd\xe0"),
+        ),
+    )
+    def test_little_endian_incorrect_data(self, data):
         """Writing pixel data not starting with an item tag raises."""
         self.fp.is_little_endian = True
         self.fp.is_implicit_VR = False
-        pixel_data = DataElement(0x7fe00010, 'OB',
-                                 b'\xff\xff\x00\xe0'
-                                 b'\x00\x01\x02\x03'
-                                 b'\xfe\xff\xdd\xe0',
-                                 is_undefined_length=True)
+        pixel_data = DataElement(
+            0x7FE00010,
+            "OB",
+            data,
+            is_undefined_length=True,
+        )
         msg = (
             r"Pixel Data has an undefined length indicating "
             r"that it's compressed, but the data isn't encapsulated"
@@ -2703,15 +2713,23 @@ class TestWriteUndefinedLengthPixelData:
         with pytest.raises(ValueError, match=msg):
             write_data_element(self.fp, pixel_data)
 
-    def test_big_endian_incorrect_data(self):
+    @pytest.mark.parametrize(
+        "data",
+        (
+            b"\x00\x00\x00\x00" b"\x00\x01\x02\x03" b"\xff\xfe\xe0\xdd",
+            BytesIO(b"\x00\x00\x00\x00" b"\x00\x01\x02\x03" b"\xff\xfe\xe0\xdd"),
+        ),
+    )
+    def test_big_endian_incorrect_data(self, data):
         """Writing pixel data not starting with an item tag raises."""
         self.fp.is_little_endian = False
         self.fp.is_implicit_VR = False
-        pixel_data = DataElement(0x7fe00010, 'OB',
-                                 b'\x00\x00\x00\x00'
-                                 b'\x00\x01\x02\x03'
-                                 b'\xff\xfe\xe0\xdd',
-                                 is_undefined_length=True)
+        pixel_data = DataElement(
+            0x7FE00010,
+            "OB",
+            data,
+            is_undefined_length=True,
+        )
         msg = (
             r"Pixel Data has an undefined length indicating "
             r"that it's compressed, but the data isn't encapsulated"
@@ -2776,3 +2794,106 @@ class TestWriteUndefinedLengthPixelData:
 def test_all_writers():
     """Test that the VR writer functions are complete"""
     assert set(VR) == set(writers)
+
+
+class TestWritingBufferedPixelData:
+    @pytest.mark.parametrize("bits_allocated", (8, 16))
+    def test_writing_dataset_with_buffered_pixel_data(self, bits_allocated):
+        pixel_data = b"\x00\x01\x02\x03"
+
+        # Baseline
+        fp = DicomBytesIO()
+        fp.is_little_endian = True
+        fp.is_implicit_VR = False
+
+        ds = Dataset()
+        ds.is_little_endian = True
+        ds.is_implicit_VR = False
+        ds.BitsAllocated = bits_allocated
+        ds.PixelData = pixel_data
+
+        ds.save_as(fp)
+
+        fp_buffered = DicomBytesIO()
+        fp_buffered.is_little_endian = True
+        fp_buffered.is_implicit_VR = False
+
+        ds_buffered = Dataset()
+        ds_buffered.is_little_endian = True
+        ds_buffered.is_implicit_VR = False
+        ds_buffered.BitsAllocated = bits_allocated
+        ds_buffered.PixelData = BytesIO(pixel_data)
+
+        ds_buffered.save_as(fp_buffered)
+
+        assert fp.getvalue() == fp_buffered.getvalue()
+
+    @pytest.mark.parametrize("bits_allocated", (8, 16))
+    def test_writing_dataset_with_buffered_pixel_data_reads_data_in_chunks(
+        self, bits_allocated
+    ):
+        try:
+            import resource
+        except ImportError:
+            pytest.skip("The 'resource' module is not supported on this platform")
+
+        KILOBYTE = 1000
+        MEGABYTE = KILOBYTE * 1000
+        bytes_per_iter = MEGABYTE
+
+        ds = Dataset()
+        ds.is_little_endian = True
+        ds.is_implicit_VR = False
+        ds.BitsAllocated = bits_allocated
+
+        with TemporaryFile("+wb") as large_dataset, TemporaryFile("+wb") as fp:
+            # generate 500 megabytes
+            data = BytesIO()
+            for _ in range(bytes_per_iter):
+                data.write(b"\x00")
+
+            data.seek(0)
+
+            # 500 megabytes
+            for _ in range(500):
+                large_dataset.write(data.getbuffer())
+
+            large_dataset.seek(0)
+
+            # take a snapshot of memory
+            baseline_memory_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+            # set the pixel data to the buffer
+            ds.PixelData = large_dataset
+            ds.save_as(fp)
+
+            memory_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+            # on MacOS, maxrss is in bytes. On unix, its in kilobytes
+            limit = 0
+            if sys.platform.startswith("linux"):
+                # memory usage is in kilobytes
+                limit = (MEGABYTE * 400) / KILOBYTE
+            elif sys.platform.startswith("darwin"):
+                # memory usage is in bytes
+                limit = MEGABYTE * 400
+            else:
+                pytest.skip("This test is not setup to run on this platform")
+
+            # if we have successfully kept the PixelData out of memory, then our peak memory usage
+            # usage be less than prev peak + the size of the file
+            assert memory_usage < (baseline_memory_usage + limit)
+
+    @pytest.mark.parametrize("vr", BUFFERABLE_VRS)
+    def test_all_supported_VRS_can_write_a_buffered_value(self, vr):
+        data = b"\x00\x01\x02\x03"
+        buffer = BytesIO(data)
+
+        fp = DicomBytesIO()
+        fp.is_little_endian = True
+        fp.is_implicit_VR = False
+
+        fn, _ = writers[cast(VR, vr)]
+        fn(fp, DataElement("PixelData", vr, buffer))
+
+        assert fp.getvalue() == data

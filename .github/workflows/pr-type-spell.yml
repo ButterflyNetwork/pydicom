@@ -2,7 +2,7 @@ name: pr-type-lint-spell
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ release/2.4.3-buffer ]
 
 jobs:
 
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ '3.7', '3.10' ]
+        python-version: ['3.11']
 
     steps:
     - uses: actions/checkout@v2
