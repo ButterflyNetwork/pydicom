@@ -6,7 +6,7 @@ on:
 
 jobs:
   test-pypy:
-    runs-on: [self-hosted, auto, small]
+    runs-on: bfly-auto-small
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +30,7 @@ jobs:
         pytest
 
   test-core-only:
-    runs-on: [self-hosted, auto, small]
+    runs-on: bfly-auto-small
     strategy:
       fail-fast: false
       matrix:
@@ -83,7 +83,7 @@ jobs:
       uses: codecov/codecov-action@v3
 
   test-core-extras:
-    runs-on: [self-hosted, auto, small]
+    runs-on: bfly-auto-small
     strategy:
       fail-fast: false
       matrix:

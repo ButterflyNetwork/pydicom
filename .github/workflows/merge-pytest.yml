@@ -7,7 +7,7 @@ on:
 
 jobs:
   test-all:
-    runs-on: [self-hosted, auto, small]
+    runs-on: bfly-auto-small
     strategy:
       fail-fast: false
       matrix:
